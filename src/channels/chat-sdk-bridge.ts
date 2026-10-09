@@ -500,16 +500,28 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
           name: att.name,
           mimeType: att.mimeType,
           size: att.size,
+          url: att.url,
           width: (att as unknown as Record<string, unknown>).width,
           height: (att as unknown as Record<string, unknown>).height,
         };
-        if (att.fetchData) {
-          try {
-            const buffer = await att.fetchData();
-            entry.data = buffer.toString('base64');
-          } catch (err) {
-            log.warn('Failed to download attachment', { type: att.type, err });
+        try {
+          let buffer: Buffer | undefined;
+          if (att.data) {
+            buffer = Buffer.isBuffer(att.data) ? att.data : Buffer.from(await att.data.arrayBuffer());
+          } else if (att.fetchData) {
+            buffer = await att.fetchData();
+          } else if (att.url) {
+            // Discord exposes CDN URLs without fetchData(). Download on the
+            // host so the session manager can stage the photo in the inbox.
+            const response = await fetch(att.url, { signal: AbortSignal.timeout(30_000) });
+            if (!response.ok) throw new Error(`Attachment download failed: HTTP ${response.status}`);
+            buffer = Buffer.from(await response.arrayBuffer());
           }
+          if (buffer) {
+            entry.data = buffer.toString('base64');
+          }
+        } catch (err) {
+          log.warn('Failed to download attachment', { type: att.type, err });
         }
         enriched.push(entry);
       }
